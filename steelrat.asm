@@ -264,6 +264,7 @@ map     dw page00
         dw page12
         dw page13
         dw page14
+        dw page15
 
 page00: .incbin "build/00.bin"
 page01: .incbin "build/01.bin"
@@ -280,6 +281,7 @@ page11: .incbin "build/11.bin"
 page12: .incbin "build/12.bin"
 page13: .incbin "build/13.bin"
 page14: .incbin "build/14.bin"
+page15: .incbin "build/15.bin"
 
 buffer: db 0
 
