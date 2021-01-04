@@ -1,0 +1,2 @@
+#!/bin/bash
+wine ../../bin/emu/EMU.exe build/steelrat.rka
