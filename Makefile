@@ -8,11 +8,12 @@ prepare:
 build/steelrat.rka: build/steelrat.bin build/makerka
 	./build/makerka 0 $@ $<
 
-build/makerka: makerka.cpp
-	g++ --std=c++17 $< -o $@
+build/makerka: makerka.cpp fstools.cpp fstools.h
+#	cppcheck -q --addon=misra --enable=all $^
+	g++ -pedantic --std=c++17 $^ -o $@
 
 build/steelrat.bin: steelrat.asm build/00.bin build/01.bin build/02.bin build/03.bin build/04.bin build/05.bin build/06.bin build/07.bin \
-          build/08.bin build/09.bin build/10.bin build/11.bin build/12.bin build/13.bin build/14.bin build/15.bin
+          build/08.bin build/09.bin build/10.bin build/11.bin build/12.bin build/13.bin build/14.bin
 	@echo "    savebin \"../$@\", begin, $$ - begin" > $@.save.inc
 	./bin/sjasmplus --lst=$@.lst $< $@.save.inc 1>&2
 
@@ -24,8 +25,9 @@ clean: realclean files
 realclean:
 	rm -f build/*
 
-build/makescenario: makescenario.cpp
-	g++ --std=c++17 $< -o $@
+build/makescenario: makescenario.cpp fstools.cpp fstools.h
+#	cppcheck -q --addon=misra --enable=all $^
+	g++ -pedantic --std=c++17 $^ -o $@
 
 build/00.bin: scenario/00.txt build/makescenario
 
@@ -56,8 +58,6 @@ build/12.bin: scenario/12.txt build/makescenario
 build/13.bin: scenario/13.txt build/makescenario
 
 build/14.bin: scenario/14.txt build/makescenario
-
-build/15.bin: scenario/15.txt build/makescenario
 
 build/%.bin: scenario/%.txt
 	./build/makescenario $@.tmp $<

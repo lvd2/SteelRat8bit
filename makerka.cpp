@@ -1,170 +1,140 @@
 // Make RKA file for B2M emulator
 // 2021-01-05 Alemorf aleksey.f.morozov@gmail.com
+// 2021-01-06 MISRA
 
 #include <stdexcept>
 #include <string>
 #include <iostream>
-#include <stdio.h> // FILE
-#include <sys/stat.h> // fstat
-#include <unistd.h> // unlink
-#include <assert.h>
 #include <vector>
-#include <map>
 #include <string.h>
-
-static std::string loadFile(const char* fileName, size_t maxFileSize = SIZE_MAX)
-{
-    FILE* file = fopen(fileName, "r");
-    if (file == nullptr)
-    {
-        throw std::runtime_error(std::string("Can't open file ") + fileName);
-    }
-
-    struct stat buff;
-    if (fstat(fileno(file), &buff) != 0)
-    {
-        auto result = fclose(file);
-        assert(result == 0);
-        throw std::runtime_error(std::string("Can't check file size ") + fileName);
-    }
-
-    if (buff.st_size > maxFileSize)
-    {
-        auto result = fclose(file);
-        assert(result == 0);
-        throw std::runtime_error(std::string("Too big file ") + fileName + ", current size "
-                                 + std::to_string(buff.st_size) + ", max size " + std::to_string(maxFileSize));
-    }
-
-    std::string output;
-    output.resize(buff.st_size);
-
-    if (buff.st_size > 0)
-    {
-        if (fread(&output[0], 1, output.size(), file) != output.size())
-        {
-            auto result = fclose(file);
-            assert(result == 0);
-            throw std::runtime_error(std::string("Can't read file ") + fileName);
-        }
-    }
-
-    auto result = fclose(file);
-    assert(result == 0);
-    return output;
-}
-
-static void saveFile(std::string_view fileName, const void* data, size_t size)
-{
-    FILE* file = fopen(fileName.data(), "w");
-    if (file == nullptr)
-    {
-        throw std::runtime_error(std::string("Can't create file ") + fileName.data());
-    }
-    if (size != 0U)
-    {
-        if (fwrite(data, 1, size, file) != size)
-        {
-            auto result1 = fclose(file);
-            assert(result1 == 0);
-            auto result2 = unlink(fileName.data());
-            assert(result2 == 0);
-            throw std::runtime_error(std::string("Can't write file ") + fileName.data());
-        }
-    }
-    auto result = fclose(file);
-    assert(result == 0);
-}
-
-static uint16_t apogeySum(std::string_view data)
-{
-    uint16_t result = 0;
-    if (data.size() > 0)
-    {
-        for (unsigned i = 0; i < data.size() - 1; i++)
-            result += static_cast<unsigned char>(data[i]) * 257;
-        result = (result & 0xFF00) + ((result + static_cast<unsigned char>(data.back())) & 0xFF);
-    }
-    return result;
-}
-
+#include "fstools.h"
+#include <assert.h>
 
 #pragma pack(push, 1)
 
 struct RkaFileHeader
 {
-    uint8_t startHigh, startLow;
-    uint8_t endHigh, endLow;
+    uint8_t loadAddressHigh = 0U;
+    uint8_t loadAddressLow = 0U;
+    uint8_t endAddressHigh = 0U;
+    uint8_t endAddressLow = 0U;
 };
 
 struct RkaFileFooter
 {
-    uint8_t crcHigh, crcLow;
+    uint8_t null0   = 0U;
+    uint8_t null1   = 0U;
+    uint8_t null2   = 0U;
+    uint8_t null3   = 0U;
+    uint8_t sync    = 0xE6U;
+    uint8_t crcHigh = 0U;
+    uint8_t crcLow  = 0U;
 };
 
 #pragma pack(pop)
 
+static uint16_t apogeySum(const uint8_t* data, const size_t dataSize)
+{
+    assert(data != nullptr);
+
+    uint16_t result = 0U;
+    if (dataSize > 0U)
+    {
+        unsigned i = 0U;
+        for (i = 0U; i < (dataSize - 1U); i++)
+        {
+            result = static_cast<uint16_t>(result + (data[i] * 257U));
+        }
+        result = static_cast<uint16_t>((result & 0xFF00U) | ((result + data[i]) & 0x00FFU));
+    }
+    return result;
+}
+
 int main(int argc, const char** argv)
 {
+    assert(argv != nullptr);
+    assert(argv[0] != nullptr);
+    assert(argc > 0);
+
+    int result = 1;
     try
     {
         if (argc != 4)
         {
-            std::cerr << "Usage: " << argv[0] << " <start address> <output file name> <input file name>" << std::endl;
-            return 1;
+            throw std::runtime_error(std::string("Usage: ") + argv[0] + " <start address> <output file name> <input file name>");
         }
 
-        const unsigned maxFileSize = 0x10000;
+        assert(argv[1] != nullptr);
+        assert(argv[2] != nullptr);
+        assert(argv[3] != nullptr);
+
+        // Maximal file size
+        static const size_t maxFileSize = 0x10000;
 
         // Load file
-        std::string fileContents = loadFile(argv[3], maxFileSize);
+        std::vector<uint8_t> buffer;
+        loadFile(argv[3], [&](size_t fileSize)
+        {
+            if (fileSize > maxFileSize)
+            {
+                throw std::runtime_error("Too big source file");
+            }
+            buffer.resize(fileSize + sizeof(RkaFileHeader) + sizeof(RkaFileFooter));
+            return &buffer[sizeof(RkaFileHeader)];
+        });
+
+        const size_t programmSize = buffer.size() - sizeof(RkaFileHeader) - sizeof(RkaFileFooter);
 
         // Get start address
         char* incorrectStartValue = nullptr;
-        const auto start = strtoul(argv[1], &incorrectStartValue, 0);
-        if (incorrectStartValue[0] != 0 || start >= maxFileSize || fileContents.size() > maxFileSize - start)
+        const auto loadAddress = strtoul(argv[1], &incorrectStartValue, 0);
+        if ((incorrectStartValue[0] != 0) || (loadAddress >= maxFileSize) || (programmSize > (maxFileSize - loadAddress)))
         {
             throw std::runtime_error("Incorrect start address");
         }
 
-        // Calc CRC
-        const uint16_t crc = apogeySum(fileContents);
-
-        // Allocate output buffer
-        std::vector<uint8_t> output;
-        output.resize(fileContents.size() + sizeof(RkaFileHeader) + sizeof(RkaFileFooter));
-
         // Write header
-        RkaFileHeader* rkaFileHeader = reinterpret_cast<RkaFileHeader*>(&output[0]);
-        const uint16_t end = start + fileContents.size() - 1;
-        rkaFileHeader->startHigh = start >> 8;
-        rkaFileHeader->startLow = start;
-        rkaFileHeader->endHigh = end >> 8;
-        rkaFileHeader->endLow = end;
+        RkaFileHeader rkaFileHeader;
+        rkaFileHeader.loadAddressHigh =  static_cast<uint8_t>(loadAddress >> 8U);
+        rkaFileHeader.loadAddressLow = static_cast<uint8_t>(loadAddress);
+        const unsigned endAddress = loadAddress + programmSize - 1U;
+        rkaFileHeader.endAddressHigh = static_cast<uint8_t>(endAddress >> 8U);
+        rkaFileHeader.endAddressLow = static_cast<uint8_t>(endAddress);
+        (void)memcpy(&buffer[0U], &rkaFileHeader, sizeof(rkaFileHeader));
 
-        // Write body
-        memcpy(&output[sizeof(RkaFileHeader)], fileContents.data(), fileContents.size());
+        // Calc CRC
+        const uint16_t crc = apogeySum(&buffer[sizeof(RkaFileHeader)], programmSize);
 
         // Write footer
-        RkaFileFooter* rkaFileFooter = reinterpret_cast<RkaFileFooter*>(&output[sizeof(RkaFileHeader) + fileContents.size()]);
-        rkaFileFooter->crcHigh = crc >> 8;
-        rkaFileFooter->crcLow = crc;
-        fileContents.insert(fileContents.end(), reinterpret_cast<char*>(&rkaFileFooter), reinterpret_cast<char*>(&rkaFileFooter + 1));
+        RkaFileFooter rkaFileFooter;
+        rkaFileFooter.crcHigh = static_cast<uint8_t>(crc >> 8U);
+        rkaFileFooter.crcLow = static_cast<uint8_t>(crc);
+        (void)memcpy(&buffer[sizeof(RkaFileHeader) + programmSize], &rkaFileFooter, sizeof(rkaFileFooter));
 
         // Save file
-        saveFile(argv[2], output.data(), output.size());
-        return 0;
+        saveFile(argv[2], buffer.data(), buffer.size());
+        result = 0;
 
-        // Excaption
+        // Debug
+        std::cout << "Created file " << argv[2] << std::hex
+                  << ", start address " << loadAddress
+                  << ", end address " << endAddress
+                  << ", programm size " << programmSize
+                  << ", file size " << buffer.size()
+                  << ", crc " << crc
+                  << std::endl;
+
+        // Exception
     }
     catch(const std::exception& e)
     {
-        std::cerr << e.what() << std::endl;
-        return 1;
+        std::cerr << argv[0] << ": " << e.what() << std::endl;
+        result = 1;
     }
     catch(...)
     {
-        std::cerr << "Unknown exception" << std::endl;
-        return 1;
+        std::cerr << argv[0] << ": Unknown exception" << std::endl;
+        result = 1;
     }
+    return result;
 }
